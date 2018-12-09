@@ -24,11 +24,11 @@ canonical 2-norm-squared distortion metric.
 """
 import copy
 import numpy as np
-from scipy.spatial.distance import cdist as scipy_distance
+import torch
 
 def compute_quantization(samples, init_assignment_pts,
                          init_assignment_codeword_lengths,
-                         lagrange_mult=1., epsilon=1e-5):
+                         lagrange_mult=1., epsilon=1e-5, device='cuda'):
   """
   Implements so-called entropy constrained vector quantization (ECVQ)
 
@@ -80,21 +80,22 @@ def compute_quantization(samples, init_assignment_pts,
   """
   # get rid of the original references to make sure we don't modify the data
   # in the calling scope
-  samples = np.copy(samples)
-  assignment_pts = np.copy(init_assignment_pts)
-  codeword_lengths = np.copy(init_assignment_codeword_lengths)
-  if samples.ndim == 2 and samples.shape[1] == 1:
+  samples = torch.tensor(samples, dtype=torch.float, device=device)
+  assignment_pts = torch.tensor(init_assignment_pts, dtype=torch.float, device=device)
+  codeword_lengths = torch.tensor(init_assignment_codeword_lengths, dtype=torch.float, device=device)
+
+  if samples.dim() == 2 and samples.shape[1] == 1:
     # we'll just work w/ 1d vectors for the scalar case
-    samples = np.squeeze(samples)
-    assignment_pts = np.squeeze(assignment_pts)
-  if samples.ndim == 1:
+    samples = samples.squeeze(1)
+    assignment_pts = assignment_pts.squeeze(assignment_pts, 1)
+  if samples.dim() == 1:
     # we use a more efficient partition strategy for scalar vars that
     # requires the assignment points to be sorted
-    assignment_pts = np.sort(assignment_pts)
-    assert np.all(np.diff(assignment_pts) > 0)  # monotonically increasing
-    lagrange_mult = lagrange_mult * np.std(samples)
+    assignment_pts, _ = torch.sort(assignment_pts)
+    assert torch.all(assignment_pts[1:] > assignment_pts[:-1])  # monotonically increasing
+    lagrange_mult = lagrange_mult * torch.std(samples)
   else:
-    lagrange_mult = lagrange_mult * np.mean(np.std(samples, axis=0))
+    lagrange_mult = lagrange_mult * torch.mean(torch.std(samples, dim=0))
     #^ put effective lagrange mult on a sort of normalized scale
     #  with the standard deviation of our samples
 
@@ -103,22 +104,19 @@ def compute_quantization(samples, init_assignment_pts,
       partition_with_drops(samples, assignment_pts,
                            codeword_lengths, lagrange_mult)
 
-  if samples.ndim == 1:
-    MSE = np.mean(np.square(quantized_code - samples))
-  else:
-    MSE = np.mean(np.sum(np.square(quantized_code - samples), axis=1))
+  MSE = torch.mean(torch.sum((quantized_code - samples).pow(2), dim=1))
 
-  cword_probs = np.power(2., -1 * codeword_lengths)
-  shannon_entropy = np.sum(cword_probs * codeword_lengths)
+  cword_probs = 2.**(-1 * codeword_lengths)
+  shannon_entropy = torch.sum(cword_probs * codeword_lengths)
   code_cost = MSE + lagrange_mult * shannon_entropy
 
   while True:
-    old_code_cost = np.copy(code_cost)
+    old_code_cost = code_cost
     # update the centroids based on the current partition
     for bin_idx in range(assignment_pts.shape[0]):
       binned_samples = samples[cluster_assignments == bin_idx]
       assert len(binned_samples) > 0
-      assignment_pts[bin_idx] = np.mean(binned_samples, axis=0)
+      assignment_pts[bin_idx] = torch.mean(binned_samples, dim=0)
       # the centroid rule doesn't change from unconstrained LBG
 
     # partition the data into appropriate clusters
@@ -126,25 +124,27 @@ def compute_quantization(samples, init_assignment_pts,
         partition_with_drops(samples, assignment_pts,
                              codeword_lengths, lagrange_mult)
 
-    if samples.ndim == 1:
-      MSE = np.mean(np.square(quantized_code - samples))
-    else:
-      MSE = np.mean(np.sum(np.square(quantized_code - samples), axis=1))
+    MSE = torch.mean(torch.sum((quantized_code - samples)**2, dim=1))
 
-    cword_probs = np.power(2., -1 * codeword_lengths)
-    shannon_entropy = np.sum(cword_probs * codeword_lengths)
+    cword_probs = 2.**(-codeword_lengths)
+    shannon_entropy = torch.sum(cword_probs * codeword_lengths)
     code_cost = MSE + lagrange_mult * shannon_entropy
 
-    if not np.isclose(old_code_cost, code_cost):
+    if not torch.isclose(old_code_cost, code_cost):
       assert code_cost <= old_code_cost, 'uh-oh, code cost increased'
 
     if old_code_cost == 0.0:  # avoid divide by zero below
       break
-    if (np.abs(old_code_cost - code_cost) / old_code_cost) < epsilon:
+    if (torch.abs(old_code_cost - code_cost) / old_code_cost) < epsilon:
       break
       #^ this algorithm provably reduces this cost or leaves it unchanged at
       #  each iteration so the boundedness of this cost means this is a
       #  valid stopping criterion
+
+  assignment_pts = assignment_pts.cpu().numpy()
+  cluster_assignments = cluster_assignments.cpu().numpy()
+  MSE = MSE.item()
+  shannon_entropy = shannon_entropy.item()
 
   return assignment_pts, cluster_assignments, MSE, shannon_entropy
 
@@ -164,12 +164,12 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
 
   Parameters
   ----------
-  raw_vals : ndarray (d, n) or (d,)
+  raw_vals : torch.tensor (d, n) or (d,)
       The raw values to be quantized according to the assignment points and lens
-  assignment_vals : ndarray (m, n) or (m,)
+  assignment_vals : torch.tensor (m, n) or (m,)
       The allowable assignment values. Every raw value will be assigned one
       of these values instead.
-  codeword_lengths : ndarray (m,)
+  codeword_lengths : torch.tensor (m,)
       The expected lengths of the codewords for each of the assignment vals.
   l_weight : float
       A value for the lagrange multiplier used in the augmented distance we use
@@ -186,14 +186,14 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
   # use a generalized cost function rather than the l2-norm-squared to assign
   # the partition. Therefore, we'll (for now) calculate the cost of assigning
   # each point to each interval and then just take the minimum.
-  if raw_vals.ndim == 1:
-    l2_distance = np.square(scipy_distance(raw_vals[:, None],
-                            assignment_vals[:, None], metric='euclidean'))
-  else:
-    l2_distance = np.square(scipy_distance(raw_vals,
-                            assignment_vals, metric='euclidean'))
+  if raw_vals.dim() == 1:
+    raw_vals = raw_vals[:, None]
+    assignment_vals = assignment_vals[:, None]
+
+  l2_distance = (raw_vals[:,None,:] - assignment_vals[None,:,:]).pow(2).sum(dim=2)
+
   assignment_cost = l2_distance + l_weight * codeword_lengths[None, :]
-  c_assignments = np.argmin(assignment_cost, axis=1)
+  c_assignments = torch.argmin(assignment_cost, dim=1)
 
   if return_cluster_assignments:
     return assignment_vals[c_assignments], c_assignments
@@ -201,7 +201,7 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
     return assignment_vals[c_assignments]
 
 
-def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight):
+def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight, device='cuda'):
   """
   Partition the data according to the assignment values.
 
@@ -211,12 +211,12 @@ def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight):
 
   Parameters
   ----------
-  raw_vals : ndarray (d, n) or (d,)
+  raw_vals : torch.tensor (d, n) or (d,)
       The raw values to be quantized according to the assignment points
-  a_vals : ndarray (m, n) or (m,)
+  a_vals : torch.tensor (m, n) or (m,)
       The *initial* allowable assignment values. These may change according to
       whether quantizing based on these initial points results in empty bins.
-  c_lengths : ndarray (m, )
+  c_lengths : torch.tensor (m, )
       The (precomputed) codeword lengths for each of the assignment points.
       These will have been computed purely based on the empirical entropy of the
       quantized code from the previous iteration of the algorithm.
@@ -228,18 +228,17 @@ def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight):
 
   cword_probs = calculate_assignment_probabilites(c_assignments,
                                                   a_vals.shape[0])
-  if np.any(cword_probs == 0):
-    nonzero_prob_pts = np.where(cword_probs != 0)
+  if torch.any(cword_probs == 0):
+    nonzero_prob_pts = (cword_probs != 0).nonzero()
     # the indexes of c_assignments should reflect these dropped bins
-    temp = np.arange(a_vals.shape[0])
-    temp = temp[nonzero_prob_pts]
-    reassigned_inds = {old_idx: new_idx for new_idx, old_idx in enumerate(temp)}
-    for pt in range(len(c_assignments)):
-      c_assignments[pt] = reassigned_inds[c_assignments[pt]]
-    a_vals = a_vals[nonzero_prob_pts]
-    cword_probs = cword_probs[nonzero_prob_pts]
+    temp = -1 * torch.ones(a_vals.shape[0], device=device).long()
+    temp[nonzero_prob_pts] = torch.arange(len(nonzero_prob_pts), device=device)[:,None]
+    c_assignments = temp[c_assignments]
+
+    a_vals = a_vals[nonzero_prob_pts].squeeze(1)
+    cword_probs = cword_probs[nonzero_prob_pts].squeeze(1)
   # update c_lengths so that the returned values reflect the current assignment
-  c_lengths = -1 * np.log2(cword_probs)
+  c_lengths = -1 * torch.log2(cword_probs)
 
   return quant_code, c_assignments, a_vals, c_lengths
 
@@ -248,8 +247,8 @@ def calculate_assignment_probabilites(assignments, num_clusters):
   """
   Just counts the occurence of each assignment to get an empirical pdf estimate
   """
-  temp = np.arange(num_clusters)
-  hist_b_edges = np.hstack([-np.inf, (temp[:-1] + temp[1:]) / 2, np.inf])
-  assignment_counts, _ = np.histogram(assignments, hist_b_edges)
-  empirical_density = assignment_counts / np.sum(assignment_counts)
+
+  assignment_counts = torch.bincount(assignments, minlength=num_clusters)
+  empirical_density = assignment_counts.float()/assignment_counts.sum().float()
+
   return empirical_density

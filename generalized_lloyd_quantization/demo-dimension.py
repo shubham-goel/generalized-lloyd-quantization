@@ -41,8 +41,11 @@ init_cword_len = (-1. * np.log2(1. / len(init_assignments)) *
                 np.ones((len(init_assignments),)))
 
 opt_gl_2d_apts, opt_gl_2d_assignments, opt_gl_2d_MSE, opt_gl_2d_rate = \
-    opt_gl(dummy_data, init_assignments, init_cword_len, lagrange_mult=0.1)
+    opt_gl(dummy_data, init_assignments, init_cword_len, lagrange_mult=0.1,
+            device='cuda')
 
 print("Time to compute 2d (optimal) vector quantization:",
     time.time() - starttime)
 
+print("opt_gl_2d_MSE",opt_gl_2d_MSE)
+print("opt_gl_2d_rate",opt_gl_2d_rate)
