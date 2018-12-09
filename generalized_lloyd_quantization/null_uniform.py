@@ -14,7 +14,7 @@ import scipy.spatial
 from scipy.spatial.distance import cdist as scipy_distance
 # import hdmedians
 
-def compute_quantization(samples, binwidth, placement_scheme='on_mode', use_kdtree=False):
+def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
   """
   Calculates the assignment points for uniformly-spaced quantization bins
 
@@ -115,15 +115,18 @@ def compute_quantization(samples, binwidth, placement_scheme='on_mode', use_kdtr
     assignment_pts = np.linspace(anchored_pt - num_pts_lower * binwidth,
                                  anchored_pt + num_pts_higher * binwidth,
                                  num_a_pts_each_dim)
-    quantized_code, cluster_assignments = quantize(samples, assignment_pts, True, use_kdtree=use_kdtree)
+    quantized_code, cluster_assignments = quantize(samples, assignment_pts, True)
   else:
     # careful, this can get huge in high dimensions. Fixed
-    assignment_pts = np.array([np.linspace(anchored_pt[x] - num_pts_lower[x] * binwidth[x],
+    assignment_pts = [np.linspace(anchored_pt[x] - num_pts_lower[x] * binwidth[x],
                       anchored_pt[x] + num_pts_higher[x] * binwidth[x],
-                      num_a_pts_each_dim[x]) for x in range(samples.shape[1])])
-    quantized_code, cluster_assignments = quantize(samples, assignment_pts, True, use_kdtree=use_kdtree)
+                      num_a_pts_each_dim[x]) for x in range(samples.shape[1])]
+    num_apts_orig = np.prod(np.array([len(x) for x in assignment_pts]))
+    quantized_code, cluster_assignments = quantize(samples, assignment_pts, True)
     print("Quantized, finding unique points")
     assignment_pts, cluster_assignments = np.unique(quantized_code, axis=0, return_inverse=True)
+    num_apts_final = len(assignment_pts)
+    print("Reduced #assignment points from {} -> {}".format(num_apts_orig, num_apts_final))
 
   if samples.ndim == 1:
     MSE = np.mean(np.square(quantized_code - samples))
@@ -140,7 +143,7 @@ def compute_quantization(samples, binwidth, placement_scheme='on_mode', use_kdtr
   return assignment_pts, cluster_assignments, MSE, shannon_entropy
 
 
-def quantize(raw_vals, assignment_vals, return_cluster_assignments=False, use_kdtree=False):
+def quantize(raw_vals, assignment_vals, return_cluster_assignments=False):
   def nn(X, Y):
     """Both X, Y are scalar arrays"""
     X_ind = np.argsort(X)
