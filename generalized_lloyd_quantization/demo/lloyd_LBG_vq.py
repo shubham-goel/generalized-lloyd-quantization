@@ -62,14 +62,9 @@ def main():
       assgnmnts = np.delete(assgnmnts, np.where(assgnmnts > 0.9*max_data))
       return assgnmnts
     else:
-      assgnmnts = np.delete(assgnmnts,
-          np.where(assgnmnts[:, 0] < 0.9*min_data[0]), axis=0)
-      assgnmnts = np.delete(assgnmnts,
-          np.where(assgnmnts[:, 0] > 0.9*max_data[0]), axis=0)
-      assgnmnts = np.delete(assgnmnts,
-          np.where(assgnmnts[:, 1] < 0.9*min_data[1]), axis=0)
-      assgnmnts = np.delete(assgnmnts,
-          np.where(assgnmnts[:, 1] > 0.9*max_data[1]), axis=0)
+      mask_min = np.any(assgnmnts[:,:] < 0.9*min_data[None, :], axis=1)
+      mask_max = np.any(assgnmnts[:,:] > 0.9*max_data[None, :], axis=1)
+      assgnmnts = np.delete(assgnmnts, np.where(mask_min + mask_max), axis=0)
       return assgnmnts
 
   ##########################################################
