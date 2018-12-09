@@ -10,10 +10,11 @@ in the function below
 """
 from itertools import product as cartesian_product
 import numpy as np
+import torch
 from scipy.spatial.distance import cdist as scipy_distance
-import hdmedians
+# import hdmedians
 
-def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
+def compute_quantization(samples, binwidth, placement_scheme='on_mode', device='cuda'):
   """
   Calculates the assignment points for uniformly-spaced quantization bins
 
@@ -103,55 +104,69 @@ def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
   else:
     raise KeyError('Unrecognized placement scheme ' + placement_scheme)
 
-  max_val_each_dim = np.max(samples, axis=0)
-  min_val_each_dim = np.min(samples, axis=0)
-  assert np.all(anchored_pt < max_val_each_dim)
-  assert np.all(anchored_pt >= min_val_each_dim)
-  num_pts_lower = np.floor((anchored_pt - min_val_each_dim) / binwidth)
-  num_pts_higher = np.floor((max_val_each_dim - anchored_pt) / binwidth)
+  # To Torch; Torch doesn't implement histogram for GPU
+  samples = torch.tensor(samples, dtype=torch.float, device=device)
+  binwidth = torch.tensor(binwidth, dtype=torch.float, device=device)
+  anchored_pt = torch.tensor(anchored_pt, dtype=torch.float, device=device)
+
+  max_val_each_dim, _ = torch.max(samples, dim=0)
+  min_val_each_dim, _ = torch.min(samples, dim=0)
+  assert torch.all(anchored_pt < max_val_each_dim)
+  assert torch.all(anchored_pt >= min_val_each_dim)
+  num_pts_lower = torch.floor((anchored_pt - min_val_each_dim) / binwidth)
+  num_pts_higher = torch.floor((max_val_each_dim - anchored_pt) / binwidth)
   num_a_pts_each_dim = num_pts_lower + num_pts_higher + 1
-  if samples.ndim == 1:
-    assignment_pts = np.linspace(anchored_pt - num_pts_lower * binwidth,
+  if samples.dim() == 1:
+    assignment_pts = torch.linspace(anchored_pt - num_pts_lower * binwidth,
                                  anchored_pt + num_pts_higher * binwidth,
-                                 num_a_pts_each_dim)
+                                 num_a_pts_each_dim).to(device)
   else:
     # careful, this can get huge in high dimensions.
-    assignment_pts = np.array(list(cartesian_product(
-      *[np.linspace(anchored_pt[x] - num_pts_lower[x] * binwidth[x],
-                    anchored_pt[x] + num_pts_higher[x] * binwidth[x],
-                    num_a_pts_each_dim[x]) for x in range(samples.shape[1])])))
+    axis_pts = [torch.linspace((anchored_pt[x] - num_pts_lower[x] * binwidth[x]).item(),
+                    (anchored_pt[x] + num_pts_higher[x] * binwidth[x]).item(),
+                    num_a_pts_each_dim[x].long().item()).to(device) for x in range(samples.shape[1])]
+    ap_tuple = torch.meshgrid(axis_pts)
+    assignment_pts = torch.stack(ap_tuple, dim=ap_tuple[0].dim())
+    assignment_pts = torch.reshape(assignment_pts, (-1,len(ap_tuple)))
 
   quantized_code, cluster_assignments = quantize(samples, assignment_pts, True)
 
-  if samples.ndim == 1:
-    MSE = np.mean(np.square(quantized_code - samples))
+  if samples.dim() == 1:
+    MSE = torch.mean((quantized_code - samples).pow(2))
   else:
-    MSE = np.mean(np.sum(np.square(quantized_code - samples), axis=1))
+    MSE = torch.mean(torch.sum((quantized_code - samples).pow(2), dim=1))
 
   cword_probs = calculate_assignment_probabilites(cluster_assignments,
                                                   assignment_pts.shape[0])
-  assert np.isclose(np.sum(cword_probs), 1.0)
-  nonzero_prob_pts = np.where(cword_probs != 0)  # avoid log2(0)
-  shannon_entropy = -1 * np.sum(
-      cword_probs[nonzero_prob_pts] * np.log2(cword_probs[nonzero_prob_pts]))
+  assert torch.isclose(torch.sum(cword_probs), torch.tensor(1.0, device=device))
+  nonzero_prob_pts = (cword_probs != 0).nonzero()  # avoid log2(0)
+  shannon_entropy = -1 * torch.sum(
+      cword_probs[nonzero_prob_pts] * torch.log2(cword_probs[nonzero_prob_pts]))
+
+  assignment_pts = assignment_pts.cpu().numpy()
+  cluster_assignments = cluster_assignments.cpu().numpy()
+  MSE = MSE.item()
+  shannon_entropy = shannon_entropy.item()
 
   return assignment_pts, cluster_assignments, MSE, shannon_entropy
 
 
-def quantize(raw_vals, assignment_vals, return_cluster_assignments=False):
-  if raw_vals.ndim == 1:
+def quantize(raw_vals, assignment_vals, return_cluster_assignments=False, device='cuda'):
+  if raw_vals.dim() == 1:
     if len(assignment_vals) == 1:
       # everything gets assigned to this point
-      c_assignments = np.zeros((len(raw_vals),), dtype='int')
+      c_assignments = torch.zeros((len(raw_vals),), dtype='int')
     else:
+      raise NotImplementedError("Not implemented for Torch")
       bin_edges = (assignment_vals[:-1] + assignment_vals[1:]) / 2
-      c_assignments = np.digitize(raw_vals, bin_edges)
+      c_assignments = torch.tensor(np.digitize(raw_vals.cpu().numpy(), bin_edges.cpu.numpy()),
+                                  dtype=torch.float, device=device)
       #^ This is more efficient than our vector quantization because here we use
       #  sorted bin edges and the assignment complexity is (I believe)
       #  logarithmic in the number of intervals.
   else:
-    c_assignments = np.argmin(scipy_distance(raw_vals, assignment_vals,
-                                             metric='euclidean'), axis=1)
+    l2_distance = (raw_vals[:,None,:] - assignment_vals[None,:,:]).pow(2).sum(dim=2)
+    c_assignments = torch.argmin(l2_distance, dim=1)
     #^ This is just a BRUTE FORCE nearest neighbor search. I tried to find a
     #  fast implementation of this based on KD-trees or Ball Trees, but wasn't
     #  successful. I also tried scipy's vq method from the clustering
@@ -167,8 +182,6 @@ def quantize(raw_vals, assignment_vals, return_cluster_assignments=False):
     return assignment_vals[c_assignments]
 
 def calculate_assignment_probabilites(assignments, num_clusters):
-  temp = np.arange(num_clusters)
-  hist_b_edges = np.hstack([-np.inf, (temp[:-1] + temp[1:]) / 2, np.inf])
-  assignment_counts, _ = np.histogram(assignments, hist_b_edges)
-  empirical_density = assignment_counts / np.sum(assignment_counts)
+  assignment_counts = torch.bincount(assignments, minlength=num_clusters)
+  empirical_density = assignment_counts.float()/assignment_counts.sum().float()
   return empirical_density

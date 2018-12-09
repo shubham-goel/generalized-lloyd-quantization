@@ -102,7 +102,7 @@ def compute_quantization(samples, init_assignment_pts,
   # partition the data into appropriate clusters
   quantized_code, cluster_assignments, assignment_pts, codeword_lengths = \
       partition_with_drops(samples, assignment_pts,
-                           codeword_lengths, lagrange_mult)
+                           codeword_lengths, lagrange_mult, device=device)
 
   MSE = torch.mean(torch.sum((quantized_code - samples).pow(2), dim=1))
 
@@ -126,7 +126,7 @@ def compute_quantization(samples, init_assignment_pts,
 
     MSE = torch.mean(torch.sum((quantized_code - samples)**2, dim=1))
 
-    cword_probs = 2.**(-codeword_lengths)
+    cword_probs = 2.**(-1 * codeword_lengths)
     shannon_entropy = torch.sum(cword_probs * codeword_lengths)
     code_cost = MSE + lagrange_mult * shannon_entropy
 
