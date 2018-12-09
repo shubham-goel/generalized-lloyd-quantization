@@ -40,12 +40,12 @@ init_assignments = get_init_assignments_for_lloyd(dummy_data, BINWIDTHS)
 init_cword_len = (-1. * np.log2(1. / len(init_assignments)) *
                 np.ones((len(init_assignments),)))
 
-opt_gl_2d_apts, opt_gl_2d_assignments, opt_gl_2d_MSE, opt_gl_2d_rate = \
+opt_gl_nd_apts, opt_gl_nd_assignments, opt_gl_nd_MSE, opt_gl_nd_rate = \
     opt_gl(dummy_data, init_assignments, init_cword_len, lagrange_mult=0.1,
             device='cuda')
 
-print("Time to compute 2d (optimal) vector quantization:",
+print("Time to compute {}d (optimal) vector quantization:".format(ndims),
     time.time() - starttime)
 
-print("opt_gl_2d_MSE",opt_gl_2d_MSE)
-print("opt_gl_2d_rate",opt_gl_2d_rate)
+print("{}d MSE per dimension".format(ndims),opt_gl_nd_MSE/ndims)
+print("{}d rate per dimension".format(ndims),opt_gl_nd_rate/ndims)

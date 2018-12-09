@@ -122,7 +122,7 @@ def compute_quantization(samples, init_assignment_pts,
     # partition the data into appropriate clusters
     quantized_code, cluster_assignments, assignment_pts, codeword_lengths = \
         partition_with_drops(samples, assignment_pts,
-                             codeword_lengths, lagrange_mult)
+                             codeword_lengths, lagrange_mult, device=device)
 
     MSE = torch.mean(torch.sum((quantized_code - samples)**2, dim=1))
 
