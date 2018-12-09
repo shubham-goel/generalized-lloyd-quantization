@@ -10,10 +10,11 @@ in the function below
 """
 from itertools import product as cartesian_product
 import numpy as np
+import scipy.spatial
 from scipy.spatial.distance import cdist as scipy_distance
-import hdmedians
+# import hdmedians
 
-def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
+def compute_quantization(samples, binwidth, placement_scheme='on_mode', use_kdtree=False):
   """
   Calculates the assignment points for uniformly-spaced quantization bins
 
@@ -114,14 +115,15 @@ def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
     assignment_pts = np.linspace(anchored_pt - num_pts_lower * binwidth,
                                  anchored_pt + num_pts_higher * binwidth,
                                  num_a_pts_each_dim)
+    quantized_code, cluster_assignments = quantize(samples, assignment_pts, True, use_kdtree=use_kdtree)
   else:
-    # careful, this can get huge in high dimensions.
-    assignment_pts = np.array(list(cartesian_product(
-      *[np.linspace(anchored_pt[x] - num_pts_lower[x] * binwidth[x],
-                    anchored_pt[x] + num_pts_higher[x] * binwidth[x],
-                    num_a_pts_each_dim[x]) for x in range(samples.shape[1])])))
-
-  quantized_code, cluster_assignments = quantize(samples, assignment_pts, True)
+    # careful, this can get huge in high dimensions. Fixed
+    assignment_pts = np.array([np.linspace(anchored_pt[x] - num_pts_lower[x] * binwidth[x],
+                      anchored_pt[x] + num_pts_higher[x] * binwidth[x],
+                      num_a_pts_each_dim[x]) for x in range(samples.shape[1])])
+    quantized_code, cluster_assignments = quantize(samples, assignment_pts, True, use_kdtree=use_kdtree)
+    print("Quantized, finding unique points")
+    assignment_pts, cluster_assignments = np.unique(quantized_code, axis=0, return_inverse=True)
 
   if samples.ndim == 1:
     MSE = np.mean(np.square(quantized_code - samples))
@@ -138,20 +140,47 @@ def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
   return assignment_pts, cluster_assignments, MSE, shannon_entropy
 
 
-def quantize(raw_vals, assignment_vals, return_cluster_assignments=False):
+def quantize(raw_vals, assignment_vals, return_cluster_assignments=False, use_kdtree=False):
+  def nn(X, Y):
+    """Both X, Y are scalar arrays"""
+    X_ind = np.argsort(X)
+    Y_ind = np.argsort(Y)
+    X_iind = np.argsort(X_ind)
+    Y_iind = np.argsort(Y_ind)
+    X_sorted = X[X_ind]
+    Y_sorted = Y[Y_ind]
+    edges = (Y_sorted[:-1] + Y_sorted[1:])/2
+    neigh_XsYs = np.digitize(X_sorted, edges)
+    neigh = Y_ind[neigh_XsYs[X_iind]]
+    return neigh
+
   if raw_vals.ndim == 1:
     if len(assignment_vals) == 1:
       # everything gets assigned to this point
       c_assignments = np.zeros((len(raw_vals),), dtype='int')
     else:
-      bin_edges = (assignment_vals[:-1] + assignment_vals[1:]) / 2
-      c_assignments = np.digitize(raw_vals, bin_edges)
+      c_assignments = nn(raw_vals, assignment_vals)
       #^ This is more efficient than our vector quantization because here we use
       #  sorted bin edges and the assignment complexity is (I believe)
       #  logarithmic in the number of intervals.
+    quantized_code = assignment_vals[c_assignments]
   else:
-    c_assignments = np.argmin(scipy_distance(raw_vals, assignment_vals,
-                                             metric='euclidean'), axis=1)
+    """
+    Quantize each dimension independently
+      assignment_vals: (n,m)
+    Returns
+      quantized_code: (d, n)
+      c_assignments: (d, n)
+    """
+    c_assignments = np.zeros(raw_vals.shape)
+    quantized_code = np.zeros(raw_vals.shape)
+    for i in range(raw_vals.shape[1]):
+      raw_vals_i = raw_vals[:,i]
+      assignment_vals_i = assignment_vals[i]
+      c_assignments_i = nn(raw_vals_i, assignment_vals_i)
+      c_assignments[:,i] = c_assignments_i
+      quantized_code[:,i] = assignment_vals_i[c_assignments_i]
+    #  Not Anymore
     #^ This is just a BRUTE FORCE nearest neighbor search. I tried to find a
     #  fast implementation of this based on KD-trees or Ball Trees, but wasn't
     #  successful. I also tried scipy's vq method from the clustering
@@ -162,9 +191,9 @@ def quantize(raw_vals, assignment_vals, return_cluster_assignments=False):
     #  speed up this part of the algorithm...
 
   if return_cluster_assignments:
-    return assignment_vals[c_assignments], c_assignments
+    return quantized_code, c_assignments
   else:
-    return assignment_vals[c_assignments]
+    return quantized_code
 
 def calculate_assignment_probabilites(assignments, num_clusters):
   temp = np.arange(num_clusters)
