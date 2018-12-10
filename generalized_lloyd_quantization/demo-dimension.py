@@ -56,5 +56,5 @@ opt_gl_nd_apts, opt_gl_nd_assignments, opt_gl_nd_MSE, opt_gl_nd_rate = \
 print("Time to compute nd (optimal) vector quantization:",
     time.time() - starttime)
 
-print("opt_gl_{}d_MSE per dimension".format(ndims),opt_gl_nd_MSE/ndims)
-print("opt_gl_{}d_rate per dimension".format(ndims), opt_gl_nd_rate/ndims)
+print("{}d MSE per dimension".format(ndims),opt_gl_nd_MSE/ndims)
+print("{}d rate per dimension".format(ndims),opt_gl_nd_rate/ndims)

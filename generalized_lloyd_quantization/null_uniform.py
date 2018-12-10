@@ -8,10 +8,7 @@ points. One thing that makes some sense is to place an assignment point directly
 on the mode, median, or mean of the distribution, which we give the option of
 in the function below
 """
-from itertools import product as cartesian_product
 import numpy as np
-import scipy.spatial
-from scipy.spatial.distance import cdist as scipy_distance
 # import hdmedians
 
 def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
