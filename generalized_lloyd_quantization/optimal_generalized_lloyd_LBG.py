@@ -30,7 +30,7 @@ from scipy.spatial import KDTree
 def compute_quantization(samples, init_assignment_pts,
                          init_assignment_codeword_lengths,
                          lagrange_mult=1., epsilon=1e-5,
-                         nn_method='brute_scipy'):
+                         nn_method='brute_break'):
   """
   Implements so-called entropy constrained vector quantization (ECVQ)
 
@@ -157,7 +157,7 @@ def compute_quantization(samples, init_assignment_pts,
 
 def quantize(raw_vals, assignment_vals, codeword_lengths,
              l_weight, return_cluster_assignments=False,
-             nn_method='brute_scipy'):
+             nn_method='brute_break'):
   """
   Makes a quantization according to BOTH nearest neighbor and resulting code len
 
@@ -187,8 +187,8 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
       also return the index of assigned point for each of the rows in
       raw_vals (this is the identifier of which codeword was used to quantize
       this datapoint). Default False.
-  nn_method: str \in (brute_np, brute_scipy, kdtree)
-      Specifies the method to compute nearest neighbour.
+  nn_method: str \in (brute_np, brute_scipy, brute_break, kdtree)
+      Specifies the method to compute nearest neighbour. brute_break works best.
   """
   assert len(assignment_vals) == len(codeword_lengths)
   # I could not easily find an implementation of nearest neighbors that would
@@ -210,6 +210,12 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
   if nn_method == 'brute_np':
     l2_distance = np.power((raw_vals_pad[:,None,:] - assignment_vals_pad[None,:,:]),2).sum(axis=2)
     c_assignments = np.argmin(l2_distance, axis=1)
+  elif nn_method == 'brute_break':
+    # Answer independent of raw_values**2 term
+    assignment_vals_pad_norm = np.linalg.norm(assignment_vals_pad, axis=1)**2
+    corr = np.dot(raw_vals_pad, assignment_vals_pad.T)
+    l2_distance = assignment_vals_pad_norm[None, :] - 2*corr
+    c_assignments = np.argmin(l2_distance, axis=1)
   elif nn_method == 'brute_scipy':
     l2_distance = np.square(scipy_distance(raw_vals_pad,
                             assignment_vals_pad, metric='euclidean'))
@@ -226,7 +232,7 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
     return assignment_vals[c_assignments]
 
 
-def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight, nn_method='brute_scipy'):
+def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight, nn_method='brute_break'):
   """
   Partition the data according to the assignment values.
 
@@ -255,15 +261,17 @@ def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight, nn_method='brute
   cword_probs = calculate_assignment_probabilites(c_assignments,
                                                   a_vals.shape[0])
   if np.any(cword_probs == 0):
-    nonzero_prob_pts = np.where(cword_probs != 0)
+    assert(cword_probs.ndim == 1)
+    nonzero_prob_pts = (cword_probs != 0).nonzero()[0]
     # the indexes of c_assignments should reflect these dropped bins
-    temp = np.arange(a_vals.shape[0])
-    temp = temp[nonzero_prob_pts]
-    reassigned_inds = {old_idx: new_idx for new_idx, old_idx in enumerate(temp)}
-    for pt in range(len(c_assignments)):
-      c_assignments[pt] = reassigned_inds[c_assignments[pt]]
+    temp = -1 * np.ones(a_vals.shape[0], dtype=np.int)
+    temp[nonzero_prob_pts] = np.arange(len(nonzero_prob_pts))
+    c_assignments = temp[c_assignments]
+    assert((c_assignments >=0).all())
+
     a_vals = a_vals[nonzero_prob_pts]
     cword_probs = cword_probs[nonzero_prob_pts]
+
   # update c_lengths so that the returned values reflect the current assignment
   c_lengths = -1 * np.log2(cword_probs)
 
