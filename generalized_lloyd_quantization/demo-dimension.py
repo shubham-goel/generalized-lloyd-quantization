@@ -14,15 +14,22 @@ def get_init_assignments_for_lloyd(data, the_binwidths):
     min_data = np.min(data, axis=0)
     max_data = np.max(data, axis=0)
     if data.ndim == 1:
-        assgnmnts = np.delete(assgnmnts, np.where(assgnmnts < 0.9*min_data))
-        assgnmnts = np.delete(assgnmnts, np.where(assgnmnts > 0.9*max_data))
-        return assgnmnts
+        min_coeff = np.where(min_data<0, 0.9, 1.1)
+        max_coeff = np.where(max_data<0, 1.1, 0.9)
+        min_mask  = (assgnmnts <= min_coeff*min_data)
+        max_mask  = (assgnmnts >= max_coeff*max_data)
+        zero_mask = min_mask + max_mask
     else:
-        mask_min = np.any(assgnmnts[:,:] < 0.9*min_data[None, :], axis=1)
-        mask_max = np.any(assgnmnts[:,:] > 0.9*max_data[None, :], axis=1)
-        assgnmnts = np.delete(assgnmnts, np.where(mask_min + mask_max), axis=0)
-        return assgnmnts
-
+        min_coeff = np.where(min_data<0, 0.9, 1.1)
+        max_coeff = np.where(max_data<0, 1.1, 0.9)
+        min_mask = np.any(assgnmnts[:,:] <= (min_coeff*min_data)[None, :], axis=1)
+        max_mask = np.any(assgnmnts[:,:] >= (max_coeff*max_data)[None, :], axis=1)
+        zero_mask = min_mask + max_mask
+    num_apts_orig = assgnmnts.shape[0]
+    num_apts_new = assgnmnts.shape[0] - len(zero_mask.nonzero()[0])
+    assgnmnts = np.delete(assgnmnts, np.where(zero_mask), axis=0)
+    print("Trimmed extreme assignment points: {} -> {}".format(num_apts_orig, num_apts_new))
+    return assgnmnts
 
 ndims = 4
 random_laplacian_samps = np.random.laplace(scale=10, size=(50000, ndims))
@@ -35,7 +42,7 @@ for i in range(1,ndims):
 # We can compare this to the optimal generalized Lloyd
 BINWIDTHS = 23 + np.arange(ndims)/ndims
 starttime = time.time()
-print("getting initial assignments...")
+print("Getting initial assignments...")
 init_assignments = get_init_assignments_for_lloyd(dummy_data, BINWIDTHS)
 init_cword_len = (-1. * np.log2(1. / len(init_assignments)) *
                 np.ones((len(init_assignments),)))

@@ -117,16 +117,20 @@ def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
                                  num_a_pts_each_dim)
     quantized_code, cluster_assignments = quantize(samples, assignment_pts, True)
   else:
-    # careful, this can get huge in high dimensions. Fixed
+    # Instead of taking a cartesian product of `n` scalar assignment-points,
+    # pass them as is to quantize() routine. There, we quantize each of the
+    # `n` dimensions individually using the corresponding scalar assignment-points.
+    # Most fot he bins (in the cartesian product space) remain empty, discard them.
+    # Recompute list of non-empty bins/vector assignment-points.
+
     assignment_pts = [np.linspace(anchored_pt[x] - num_pts_lower[x] * binwidth[x],
                       anchored_pt[x] + num_pts_higher[x] * binwidth[x],
                       num_a_pts_each_dim[x]) for x in range(samples.shape[1])]
     num_apts_orig = np.prod(np.array([len(x) for x in assignment_pts]))
     quantized_code, cluster_assignments = quantize(samples, assignment_pts, True)
-    print("Quantized, finding unique points")
     assignment_pts, cluster_assignments = np.unique(quantized_code, axis=0, return_inverse=True)
     num_apts_final = len(assignment_pts)
-    print("Reduced #assignment points from {} -> {}".format(num_apts_orig, num_apts_final))
+    print("Trimmed empty assignment points: {} -> {}".format(num_apts_orig, num_apts_final))
 
   if samples.ndim == 1:
     MSE = np.mean(np.square(quantized_code - samples))
@@ -144,37 +148,35 @@ def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
 
 
 def quantize(raw_vals, assignment_vals, return_cluster_assignments=False):
+
   def nn(X, Y):
-    """Both X, Y are scalar arrays"""
-    X_ind = np.argsort(X)
-    Y_ind = np.argsort(Y)
-    X_iind = np.argsort(X_ind)
-    Y_iind = np.argsort(Y_ind)
-    X_sorted = X[X_ind]
-    Y_sorted = Y[Y_ind]
-    edges = (Y_sorted[:-1] + Y_sorted[1:])/2
-    neigh_XsYs = np.digitize(X_sorted, edges)
-    neigh = Y_ind[neigh_XsYs[X_iind]]
-    return neigh
+    """For each element in X, finds NN in Y when both X,Y are scalar arrays"""
+    if len(Y)==1:
+      # Everything gets assigned to this point
+      return np.zeros((len(raw_vals),), dtype='int')
+    else:
+      # Here, we use sorted bin edges and the assignment complexity is
+      # (I believe) logarithmic in the number of intervals.
+      X_ind = np.argsort(X)
+      Y_ind = np.argsort(Y)
+      X_iind = np.argsort(X_ind)
+      Y_iind = np.argsort(Y_ind)
+      X_sorted = X[X_ind]
+      Y_sorted = Y[Y_ind]
+      edges = (Y_sorted[:-1] + Y_sorted[1:])/2
+      neigh_XsYs = np.digitize(X_sorted, edges)
+      neigh = Y_ind[neigh_XsYs[X_iind]]
+      return neigh
 
   if raw_vals.ndim == 1:
-    if len(assignment_vals) == 1:
-      # everything gets assigned to this point
-      c_assignments = np.zeros((len(raw_vals),), dtype='int')
-    else:
-      c_assignments = nn(raw_vals, assignment_vals)
-      #^ This is more efficient than our vector quantization because here we use
-      #  sorted bin edges and the assignment complexity is (I believe)
-      #  logarithmic in the number of intervals.
+    c_assignments = nn(raw_vals, assignment_vals)
     quantized_code = assignment_vals[c_assignments]
   else:
-    """
-    Quantize each dimension independently
-      assignment_vals: (n,m)
-    Returns
-      quantized_code: (d, n)
-      c_assignments: (d, n)
-    """
+    # Quantize each dimension independently
+    #   assignment_vals: (n,m)
+    # Return
+    #   quantized_code: (d, n)
+    #   c_assignments: (d, n)
     c_assignments = np.zeros(raw_vals.shape)
     quantized_code = np.zeros(raw_vals.shape)
     for i in range(raw_vals.shape[1]):
@@ -183,15 +185,6 @@ def quantize(raw_vals, assignment_vals, return_cluster_assignments=False):
       c_assignments_i = nn(raw_vals_i, assignment_vals_i)
       c_assignments[:,i] = c_assignments_i
       quantized_code[:,i] = assignment_vals_i[c_assignments_i]
-    #  Not Anymore
-    #^ This is just a BRUTE FORCE nearest neighbor search. I tried to find a
-    #  fast implementation of this based on KD-trees or Ball Trees, but wasn't
-    #  successful. I also tried scipy's vq method from the clustering
-    #  module but it's also just doing brute force search (albeit in C).
-    #  This approach might have decent performance when the number of
-    #  assignment points is small (low fidelity, very loss regime). In the
-    #  future we should be able to roll a much faster search implementation and
-    #  speed up this part of the algorithm...
 
   if return_cluster_assignments:
     return quantized_code, c_assignments
