@@ -25,10 +25,12 @@ canonical 2-norm-squared distortion metric.
 import copy
 import numpy as np
 from scipy.spatial.distance import cdist as scipy_distance
+from scipy.spatial import KDTree
 
 def compute_quantization(samples, init_assignment_pts,
                          init_assignment_codeword_lengths,
-                         lagrange_mult=1., epsilon=1e-5):
+                         lagrange_mult=1., epsilon=1e-5,
+                         nn_method='brute_scipy'):
   """
   Implements so-called entropy constrained vector quantization (ECVQ)
 
@@ -101,7 +103,8 @@ def compute_quantization(samples, init_assignment_pts,
   # partition the data into appropriate clusters
   quantized_code, cluster_assignments, assignment_pts, codeword_lengths = \
       partition_with_drops(samples, assignment_pts,
-                           codeword_lengths, lagrange_mult)
+                           codeword_lengths, lagrange_mult,
+                           nn_method=nn_method)
 
   if samples.ndim == 1:
     MSE = np.mean(np.square(quantized_code - samples))
@@ -126,7 +129,8 @@ def compute_quantization(samples, init_assignment_pts,
     # partition the data into appropriate clusters
     quantized_code, cluster_assignments, assignment_pts, codeword_lengths = \
         partition_with_drops(samples, assignment_pts,
-                             codeword_lengths, lagrange_mult)
+                             codeword_lengths, lagrange_mult,
+                             nn_method=nn_method)
 
     if samples.ndim == 1:
       MSE = np.mean(np.square(quantized_code - samples))
@@ -152,7 +156,8 @@ def compute_quantization(samples, init_assignment_pts,
 
 
 def quantize(raw_vals, assignment_vals, codeword_lengths,
-             l_weight, return_cluster_assignments=False):
+             l_weight, return_cluster_assignments=False,
+             nn_method='brute_scipy'):
   """
   Makes a quantization according to BOTH nearest neighbor and resulting code len
 
@@ -182,6 +187,8 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
       also return the index of assigned point for each of the rows in
       raw_vals (this is the identifier of which codeword was used to quantize
       this datapoint). Default False.
+  nn_method: str \in (brute_np, brute_scipy, kdtree)
+      Specifies the method to compute nearest neighbour.
   """
   assert len(assignment_vals) == len(codeword_lengths)
   # I could not easily find an implementation of nearest neighbors that would
@@ -189,13 +196,29 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
   # the partition. Therefore, we'll (for now) calculate the cost of assigning
   # each point to each interval and then just take the minimum.
   if raw_vals.ndim == 1:
-    l2_distance = np.square(scipy_distance(raw_vals[:, None],
-                            assignment_vals[:, None], metric='euclidean'))
+    raw_vals = raw_vals[:, None]
+    assignment_vals = assignment_vals[:, None]
+
+  raw_vals_pad = np.concatenate((raw_vals,
+                    np.zeros((raw_vals.shape[0],1))),
+                    axis=1)
+
+  assignment_vals_pad = np.concatenate((assignment_vals,
+                            np.sqrt(l_weight * codeword_lengths)[:,None]),
+                            axis=1)
+
+  if nn_method == 'brute_np':
+    l2_distance = np.power((raw_vals_pad[:,None,:] - assignment_vals_pad[None,:,:]),2).sum(axis=2)
+    c_assignments = np.argmin(l2_distance, axis=1)
+  elif nn_method == 'brute_scipy':
+    l2_distance = np.square(scipy_distance(raw_vals_pad,
+                            assignment_vals_pad, metric='euclidean'))
+    c_assignments = np.argmin(l2_distance, axis=1)
+  elif nn_method == 'kdtree':
+    _, c_assignments = KDTree(assignment_vals_pad).query(raw_vals_pad)
   else:
-    l2_distance = np.square(scipy_distance(raw_vals,
-                            assignment_vals, metric='euclidean'))
-  assignment_cost = l2_distance + l_weight * codeword_lengths[None, :]
-  c_assignments = np.argmin(assignment_cost, axis=1)
+    raise ValueError('nn_method = {} not supported. Must be one \
+            of (brute_np, brute_scipy, kdtree)'.format(nn_method))
 
   if return_cluster_assignments:
     return assignment_vals[c_assignments], c_assignments
@@ -203,7 +226,7 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
     return assignment_vals[c_assignments]
 
 
-def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight):
+def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight, nn_method='brute_scipy'):
   """
   Partition the data according to the assignment values.
 
@@ -226,7 +249,8 @@ def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight):
       The value of the lagrange multiplier in the augmented cost function
   """
   quant_code, c_assignments = quantize(raw_vals, a_vals,
-                                       c_lengths, l_weight, True)
+                                       c_lengths, l_weight, True,
+                                       nn_method=nn_method)
 
   cword_probs = calculate_assignment_probabilites(c_assignments,
                                                   a_vals.shape[0])

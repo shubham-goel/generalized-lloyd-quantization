@@ -51,7 +51,8 @@ print("Time to compute initial assignment points:",
     time.time() - starttime)
 
 opt_gl_nd_apts, opt_gl_nd_assignments, opt_gl_nd_MSE, opt_gl_nd_rate = \
-    opt_gl(dummy_data, init_assignments, init_cword_len, lagrange_mult=0.1)
+    opt_gl(dummy_data, init_assignments, init_cword_len, lagrange_mult=0.1,
+    nn_method='brute_scipy')
 
 print("Time to compute nd (optimal) vector quantization:",
     time.time() - starttime)
