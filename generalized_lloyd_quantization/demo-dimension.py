@@ -53,7 +53,7 @@ init_cword_len = (-1. * np.log2(1. / len(init_assignments)) *
 print("computing optimal lloyd quantization...")
 opt_gl_nd_apts, opt_gl_nd_assignments, opt_gl_nd_MSE, opt_gl_nd_rate = \
     opt_gl(dummy_data, init_assignments, init_cword_len, lagrange_mult=0.1,
-            device=device)
+            device=device, nn_method='brute_break')
 
 print("Time to compute {}d (optimal) vector quantization:".format(ndims),
     time.time() - starttime)

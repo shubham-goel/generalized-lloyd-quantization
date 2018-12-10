@@ -28,7 +28,8 @@ import torch
 
 def compute_quantization(samples, init_assignment_pts,
                          init_assignment_codeword_lengths,
-                         lagrange_mult=1., epsilon=1e-5, device='cuda'):
+                         lagrange_mult=1., epsilon=1e-5, device='cuda',
+                         nn_method='brute_break'):
   """
   Implements so-called entropy constrained vector quantization (ECVQ)
 
@@ -102,7 +103,8 @@ def compute_quantization(samples, init_assignment_pts,
   # partition the data into appropriate clusters
   quantized_code, cluster_assignments, assignment_pts, codeword_lengths = \
       partition_with_drops(samples, assignment_pts,
-                           codeword_lengths, lagrange_mult, device=device)
+                           codeword_lengths, lagrange_mult, device=device,
+                           nn_method=nn_method)
 
   MSE = torch.mean(torch.sum((quantized_code - samples).pow(2), dim=1))
 
@@ -122,7 +124,8 @@ def compute_quantization(samples, init_assignment_pts,
     # partition the data into appropriate clusters
     quantized_code, cluster_assignments, assignment_pts, codeword_lengths = \
         partition_with_drops(samples, assignment_pts,
-                             codeword_lengths, lagrange_mult, device=device)
+                             codeword_lengths, lagrange_mult, device=device,
+                             nn_method=nn_method)
 
     MSE = torch.mean(torch.sum((quantized_code - samples)**2, dim=1))
 
@@ -150,7 +153,8 @@ def compute_quantization(samples, init_assignment_pts,
 
 
 def quantize(raw_vals, assignment_vals, codeword_lengths,
-             l_weight, return_cluster_assignments=False, device='cuda'):
+             l_weight, return_cluster_assignments=False, device='cuda',
+             nn_method='brute_break'):
   """
   Makes a quantization according to BOTH nearest neighbor and resulting code len
 
@@ -180,6 +184,8 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
       also return the index of assigned point for each of the rows in
       raw_vals (this is the identifier of which codeword was used to quantize
       this datapoint). Default False.
+  nn_method: str \in (brute_torch, brute_break)
+      Specifies the method to compute nearest neighbour.
   """
   assert len(assignment_vals) == len(codeword_lengths)
   # I could not easily find an implementation of nearest neighbors that would
@@ -198,8 +204,16 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
                                     torch.sqrt(l_weight * codeword_lengths)[:,None]),
                                     dim=1)
 
-  l2_distance = (raw_vals_pad[:,None,:] - assignment_vals_pad[None,:,:]).pow(2).sum(dim=2)
-  c_assignments = torch.argmin(l2_distance, dim=1)
+
+  if nn_method == 'brute_break':
+    # Answer independent of raw_values**2 term
+    assignment_vals_pad_norm = torch.norm(assignment_vals_pad, dim=1)**2
+    corr = torch.mm(raw_vals_pad, assignment_vals_pad.t())
+    l2_distance = assignment_vals_pad_norm[None, :] - 2*corr
+    c_assignments = np.argmin(l2_distance, dim=1)
+  elif nn_method == 'brute_torch':
+    l2_distance = (raw_vals_pad[:,None,:] - assignment_vals_pad[None,:,:]).pow(2).sum(dim=2)
+    c_assignments = torch.argmin(l2_distance, dim=1)
 
   if return_cluster_assignments:
     return assignment_vals[c_assignments], c_assignments
@@ -207,7 +221,8 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
     return assignment_vals[c_assignments]
 
 
-def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight, device='cuda'):
+def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight, device='cuda',
+                          nn_method='brute_break'):
   """
   Partition the data according to the assignment values.
 
@@ -231,19 +246,21 @@ def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight, device='cuda'):
   """
   quant_code, c_assignments = quantize(raw_vals, a_vals,
                                        c_lengths, l_weight, True,
-                                       device=device)
+                                       device=device, nn_method=nn_method)
 
   cword_probs = calculate_assignment_probabilites(c_assignments,
                                                   a_vals.shape[0])
   if torch.any(cword_probs == 0):
-    nonzero_prob_pts = (cword_probs != 0).nonzero()
+    assert(cword_probs.dim() == 1)
+    nonzero_prob_pts = (cword_probs != 0).nonzero().squeeze(1)
     # the indexes of c_assignments should reflect these dropped bins
     temp = -1 * torch.ones(a_vals.shape[0], device=device).long()
-    temp[nonzero_prob_pts] = torch.arange(len(nonzero_prob_pts), device=device)[:,None]
+    temp[nonzero_prob_pts] = torch.arange(len(nonzero_prob_pts), device=device)
     c_assignments = temp[c_assignments]
+    assert((c_assignments >=0).all())
 
-    a_vals = a_vals[nonzero_prob_pts].squeeze(1)
-    cword_probs = cword_probs[nonzero_prob_pts].squeeze(1)
+    a_vals = a_vals[nonzero_prob_pts]
+    cword_probs = cword_probs[nonzero_prob_pts]
   # update c_lengths so that the returned values reflect the current assignment
   c_lengths = -1 * torch.log2(cword_probs)
 
