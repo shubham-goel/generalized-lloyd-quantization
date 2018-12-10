@@ -150,7 +150,7 @@ def compute_quantization(samples, init_assignment_pts,
 
 
 def quantize(raw_vals, assignment_vals, codeword_lengths,
-             l_weight, return_cluster_assignments=False):
+             l_weight, return_cluster_assignments=False, device='cuda'):
   """
   Makes a quantization according to BOTH nearest neighbor and resulting code len
 
@@ -190,10 +190,16 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
     raw_vals = raw_vals[:, None]
     assignment_vals = assignment_vals[:, None]
 
-  l2_distance = (raw_vals[:,None,:] - assignment_vals[None,:,:]).pow(2).sum(dim=2)
+  raw_vals_pad = torch.cat((raw_vals,
+                            torch.zeros((raw_vals.shape[0],1),device=device)),
+                            dim=1)
 
-  assignment_cost = l2_distance + l_weight * codeword_lengths[None, :]
-  c_assignments = torch.argmin(assignment_cost, dim=1)
+  assignment_vals_pad = torch.cat((assignment_vals,
+                                    torch.sqrt(l_weight * codeword_lengths)[:,None]),
+                                    dim=1)
+
+  l2_distance = (raw_vals_pad[:,None,:] - assignment_vals_pad[None,:,:]).pow(2).sum(dim=2)
+  c_assignments = torch.argmin(l2_distance, dim=1)
 
   if return_cluster_assignments:
     return assignment_vals[c_assignments], c_assignments
@@ -224,7 +230,8 @@ def partition_with_drops(raw_vals, a_vals, c_lengths, l_weight, device='cuda'):
       The value of the lagrange multiplier in the augmented cost function
   """
   quant_code, c_assignments = quantize(raw_vals, a_vals,
-                                       c_lengths, l_weight, True)
+                                       c_lengths, l_weight, True,
+                                       device=device)
 
   cword_probs = calculate_assignment_probabilites(c_assignments,
                                                   a_vals.shape[0])
