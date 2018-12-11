@@ -78,7 +78,6 @@ def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
     rate_total = 0
     for cluster in clusters:
         cluster_dim = len(cluster)
-        print(cluster_dim)
         Xc = data[:,cluster]
         print('Xc.shape',Xc.shape)
         if quant_method=='uni':
@@ -89,7 +88,7 @@ def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
         elif quant_method=='opt_lloyd':
             init_apts, _, _, _ = uni(Xc, np.array([binwidth]*cluster_dim), placement_scheme=placement_scheme)
             init_cword_len = (-1. * np.log2(1. / len(init_apts)) *np.ones((len(init_apts),)))
-            if device=='numpy' or cluster_dim>5:
+            if device=='numpy':
                 a_pts, c_ass, MSE, rate = opt_gl_numpy(Xc, init_apts, init_cword_len, lagrange_mult=lagrange_mult,
                                             nn_method=nn_method)
             else:
@@ -117,7 +116,7 @@ def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
     return a_pts_all, c_ass_all, MSE_total, rate_total
 
 a_pts, c_ass, MSE, rate = compute_quantization_wrapper(X,clusters=clusters,quant_method='opt_lloyd',
-                                                binwidth=8, device=device)
+                                                binwidth=5, device=device)
 
 print('MSE',MSE)
 print('rate',rate)
