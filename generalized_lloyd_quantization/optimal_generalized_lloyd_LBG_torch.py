@@ -86,20 +86,13 @@ def compute_quantization(samples, init_assignment_pts,
   codeword_lengths = torch.tensor(init_assignment_codeword_lengths, dtype=torch.float, device=device)
   lagrange_mult = float(lagrange_mult)
 
-  if samples.dim() == 2 and samples.shape[1] == 1:
-    # we'll just work w/ 1d vectors for the scalar case
-    samples = samples.squeeze(1)
-    assignment_pts = assignment_pts.squeeze(assignment_pts, 1)
   if samples.dim() == 1:
-    # we use a more efficient partition strategy for scalar vars that
-    # requires the assignment points to be sorted
-    assignment_pts, _ = torch.sort(assignment_pts)
-    assert torch.all(assignment_pts[1:] > assignment_pts[:-1])  # monotonically increasing
-    lagrange_mult = lagrange_mult * torch.std(samples)
-  else:
-    lagrange_mult = lagrange_mult * torch.mean(torch.std(samples, dim=0))
-    #^ put effective lagrange mult on a sort of normalized scale
-    #  with the standard deviation of our samples
+    samples = samples[:,None]
+    assignment_pts = assignment_pts[:,None]
+
+  lagrange_mult = lagrange_mult * torch.mean(torch.std(samples, dim=0))
+  #^ put effective lagrange mult on a sort of normalized scale
+  #  with the standard deviation of our samples
 
   # partition the data into appropriate clusters
   quantized_code, cluster_assignments, assignment_pts, codeword_lengths = \
