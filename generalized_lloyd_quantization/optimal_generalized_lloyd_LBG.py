@@ -210,7 +210,7 @@ def quantize(raw_vals, assignment_vals, codeword_lengths,
     assignment_vals_pad_norm = torch.norm(assignment_vals_pad, dim=1)**2
     corr = torch.mm(raw_vals_pad, assignment_vals_pad.t())
     l2_distance = assignment_vals_pad_norm[None, :] - 2*corr
-    c_assignments = np.argmin(l2_distance, dim=1)
+    c_assignments = torch.argmin(l2_distance, dim=1)
   elif nn_method == 'brute_torch':
     l2_distance = (raw_vals_pad[:,None,:] - assignment_vals_pad[None,:,:]).pow(2).sum(dim=2)
     c_assignments = torch.argmin(l2_distance, dim=1)
