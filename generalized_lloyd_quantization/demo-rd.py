@@ -53,32 +53,34 @@ except (OSError, IOError) as e:
 							random_laplacian_samps[:, i])
 	pickle.dump(dummy_data, open(samples_fname, 'wb'))
 
-# # next uniform vector (Nd)
-# uni_2d_rates = []
-# uni_2d_MSEs = []
-# for binwidth in np.linspace(8, 32, 50):
-# 	uni_2d_MSE = []
-# 	uni_2d_rate = []
-# 	for cluster in range(int(DATA_DIM/QUANT_DIM)):
-# 		cluster_data = dummy_data[:,cluster*QUANT_DIM:(cluster+1)*QUANT_DIM]
-# 		_, _, uni_2d_MSEc, uni_2d_ratec = uni(
-# 					cluster_data, np.array([binwidth]*QUANT_DIM), placement_scheme='on_mean')
-# 		uni_2d_MSE.append(uni_2d_MSEc)
-# 		uni_2d_rate.append(uni_2d_ratec)
-# 	uni_2d_MSE = np.sum(np.array(uni_2d_MSE))
-# 	uni_2d_rate = np.sum(np.array(uni_2d_rate))
-# 	uni_2d_MSEs.append(uni_2d_MSE / DATA_DIM)
-# 	uni_2d_rates.append(uni_2d_rate / DATA_DIM)
+# next uniform vector (Nd)
+uni_2d_rates = []
+uni_2d_MSEs = []
+uni_binwidth = list(np.linspace(8, 32, 50))
+for binwidth in uni_binwidth:
+	uni_2d_MSE = []
+	uni_2d_rate = []
+	for cluster in range(int(DATA_DIM/QUANT_DIM)):
+		cluster_data = dummy_data[:,cluster*QUANT_DIM:(cluster+1)*QUANT_DIM]
+		_, _, uni_2d_MSEc, uni_2d_ratec = uni(
+					cluster_data, np.array([binwidth]*QUANT_DIM), placement_scheme='on_mean')
+		uni_2d_MSE.append(uni_2d_MSEc)
+		uni_2d_rate.append(uni_2d_ratec)
+	uni_2d_MSE = np.sum(np.array(uni_2d_MSE))
+	uni_2d_rate = np.sum(np.array(uni_2d_rate))
+	uni_2d_MSEs.append(uni_2d_MSE / DATA_DIM)
+	uni_2d_rates.append(uni_2d_rate / DATA_DIM)
 
 # # next suboptimal generalized Lloyd (2d)
+# # Inefficient
 # gl_2d_rates = []
 # gl_2d_MSEs = []
 # for binwidth in np.linspace(8, 60, 50):
 # 	print('RD curve, suboptimal vector Lloyd, binwidth=', binwidth)
-# 	init_assignments, _, _, _ = uni(
-# 			dummy_data, np.array([binwidth]*DATA_DIM), placement_scheme='on_mean')
+# 	init_assignments, _, _, _ = uni(dummy_data, np.array([binwidth]*DATA_DIM),
+# 								placement_scheme='on_mean')
 # 	_, _, gl_2d_MSE, gl_2d_rate = gl(dummy_data, init_assignments,
-# 																		force_const_num_assignment_pts=False)
+# 									force_const_num_assignment_pts=False)
 # 	#^ make this correspond to optimal lloyd with lambda=0.0.
 # 	gl_2d_rates.append(gl_2d_rate / DATA_DIM)
 # 	gl_2d_MSEs.append(gl_2d_MSE / DATA_DIM)
@@ -86,17 +88,18 @@ except (OSError, IOError) as e:
 # finally, the optimal generalized Lloyd
 opt_gl_2d_rates = []
 opt_gl_2d_MSEs = []
-binwidth = 8
-for lagrange_w in np.linspace(0.0, 4.0, 50):
+opt_gl_2d_binwidth = 8
+opt_gl_2d_lagrange_w = list(np.linspace(0.0, 4.0, 50))
+for lagrange_w in opt_gl_2d_lagrange_w:
 	print('RD curve, optimal vector Lloyd, lagrange mult=', lagrange_w)
 	opt_gl_2d_MSE = []
 	opt_gl_2d_rate = []
 	for cluster in range(int(DATA_DIM/QUANT_DIM)):
 		cluster_data = dummy_data[:,cluster*QUANT_DIM:(cluster+1)*QUANT_DIM]
 
-		# init_assignments, _, _, _ = uni(
-		# 		dummy_data, np.array([binwidth]*QUANT_DIM), placement_scheme='on_mean')
-		init_assignments = get_init_assignments_for_lloyd(cluster_data, np.array([binwidth]*QUANT_DIM))
+		# init_assignments, _, _, _ = uni(dummy_data, np.array([opt_gl_2d_binwidth]*QUANT_DIM),
+		# 									placement_scheme='on_mean')
+		init_assignments = get_init_assignments_for_lloyd(cluster_data, np.array([opt_gl_2d_binwidth]*QUANT_DIM))
 		init_cword_len = (-1. * np.log2(1. / len(init_assignments)) *
 											np.ones((len(init_assignments),)))
 
@@ -106,7 +109,7 @@ for lagrange_w in np.linspace(0.0, 4.0, 50):
 					cluster_data, init_assignments, init_cword_len, lagrange_mult=lagrange_w,
 					device=device, nn_method='brute_break')
 		except RuntimeError:
-			print("NUMPY")
+			print("CUDA RuntimeError, Switching to Numpy")
 			_, _, opt_gl_2d_MSEc, opt_gl_2d_ratec = opt_gl_numpy(
 					cluster_data, init_assignments, init_cword_len, lagrange_mult=lagrange_w,
 					nn_method='brute_break')
@@ -123,21 +126,24 @@ rd_data = {
 	'QUANT_DIM': QUANT_DIM,
 	'uni_vec_mse': uni_2d_MSEs,
 	'uni_vec_rate': uni_2d_rates,
+	'uni_vec_binwidth': uni_binwidth,
 	'gl_vec_mse': None, # gl_2d_MSEs,
 	'gl_vec_rate': None, # gl_2d_rates,
 	'optgl_vec_mse': opt_gl_2d_MSEs,
 	'optgl_vec_rate': opt_gl_2d_rates,
+	'optgl_vec_lagrange_w': opt_gl_2d_lagrange_w,
+	'optgl_vec_binwidth': opt_gl_2d_binwidth,
 }
 pickle.dump(rd_data, open(rd_data_fname, 'wb'))
 
-# plot the three 2D variants
+# plot the three ND variants
 plt.figure(figsize=(20, 20))
-plt.plot(uni_2d_MSEs, uni_2d_rates, label='Uniform 2D', linewidth=4)
-# plt.plot(gl_2d_MSEs, gl_2d_rates, label='Suboptimal 2D Lloyd', linewidth=4)
-plt.plot(opt_gl_2d_MSEs, opt_gl_2d_rates, label='Optimal 2D Lloyd',
+plt.plot(uni_2d_MSEs, uni_2d_rates, label='Uniform {}D'.format(QUANT_DIM), linewidth=4)
+# plt.plot(gl_2d_MSEs, gl_2d_rates, label='Suboptimal {}D Lloyd'.format(QUANT_DIM), linewidth=4)
+plt.plot(opt_gl_2d_MSEs, opt_gl_2d_rates, label='Optimal {}D Lloyd'.format(QUANT_DIM),
 					linewidth=4)
 plt.legend(fontsize=15)
-plt.title('Rate-distortion performance of different vector quantization ' +
+plt.title('Rate-distortion performance of different {}D vector quantization '.format(QUANT_DIM) +
 					'schemes', fontsize=20)
 plt.xlabel('Distortion (Mean squared error)', fontsize=15)
 plt.ylabel('Rate (bits per component)', fontsize=15)
