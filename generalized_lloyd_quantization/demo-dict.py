@@ -41,8 +41,11 @@ A = sc_dictionary       # (n,n)
 X = raw_sc_codes.T      # (d,n)
 # Note: Y.T = A@X.T
 
+# Use only some X
+X = X[:50000]
+
 # Create Clusters
-num_clusters = 1 #int(A.shape[1]/64)
+num_clusters = int(A.shape[1]/3)
 cluster_assignments = get_cluster_assignments(A, num_clusters)
 clusters = [[] for c in range(num_clusters)]
 for p in range(A.shape[1]):
@@ -75,7 +78,9 @@ def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
     rate_total = 0
     for cluster in clusters:
         cluster_dim = len(cluster)
+        print(cluster_dim)
         Xc = data[:,cluster]
+        print('Xc.shape',Xc.shape)
         if quant_method=='uni':
             a_pts, c_ass, MSE, rate = uni(Xc, np.array([binwidth]*cluster_dim), placement_scheme=placement_scheme)
         elif quant_method=='lloyd':
@@ -84,15 +89,24 @@ def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
         elif quant_method=='opt_lloyd':
             init_apts, _, _, _ = uni(Xc, np.array([binwidth]*cluster_dim), placement_scheme=placement_scheme)
             init_cword_len = (-1. * np.log2(1. / len(init_apts)) *np.ones((len(init_apts),)))
-            if device=='numpy':
-                lloyd = opt_gl_numpy
+            if device=='numpy' or cluster_dim>5:
+                a_pts, c_ass, MSE, rate = opt_gl_numpy(Xc, init_apts, init_cword_len, lagrange_mult=lagrange_mult,
+                                            nn_method=nn_method)
             else:
-                lloyd = opt_gl_torch
-            a_pts, c_ass, MSE, rate = lloyd(Xc, init_apts, init_cword_len, lagrange_mult=lagrange_mult,
-                                            nn_method=nn_method, device=device)
+                try:
+                    a_pts, c_ass, MSE, rate = opt_gl_torch(Xc, init_apts, init_cword_len, lagrange_mult=lagrange_mult,
+                                                nn_method=nn_method, device=device)
+                except RuntimeError as e:
+                    # Cuda mem error; Use numpy
+                    print("Runtime error: {}".format(e))
+                    print("Switching to numpy")
+                    a_pts, c_ass, MSE, rate = opt_gl_numpy(Xc, init_apts, init_cword_len, lagrange_mult=lagrange_mult,
+                                                nn_method=nn_method)
+
+
         else:
             raise ValueError("Invalid quant_method {}".format(quant_method))
-        print(cluster_dim, MSE, rate)
+        print(cluster_dim,  MSE, rate)
         a_pts_all.append(a_pts)
         c_ass_all.append(c_ass)
         MSE_total += MSE
