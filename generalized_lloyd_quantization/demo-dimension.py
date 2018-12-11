@@ -1,10 +1,12 @@
 import time
+import torch
 import numpy as np
 from matplotlib import pyplot as plt
 
 from null_uniform import compute_quantization as uni
 from generalized_lloyd_LBG import compute_quantization as gl
 from optimal_generalized_lloyd_LBG import compute_quantization as opt_gl
+from optimal_generalized_lloyd_LBG_torch import compute_quantization as opt_gl_torch
 
 def get_init_assignments_for_lloyd(data, the_binwidths):
     # Lloyd can run into trouble if the most extreme assignment points are
@@ -31,7 +33,9 @@ def get_init_assignments_for_lloyd(data, the_binwidths):
     print("Trimmed extreme assignment points: {} -> {}".format(num_apts_orig, num_apts_new))
     return assgnmnts
 
-ndims = 4
+ndims = 2
+torch.cuda.set_device(1)
+device='cuda:1'
 random_laplacian_samps = np.random.laplace(scale=10, size=(50000, ndims))
 dummy_data = np.copy(random_laplacian_samps)
 for i in range(1,ndims):
@@ -50,11 +54,18 @@ init_cword_len = (-1. * np.log2(1. / len(init_assignments)) *
 print("Time to compute initial assignment points:",
     time.time() - starttime)
 
+print("computing optimal lloyd quantization...")
+# Numpy
 opt_gl_nd_apts, opt_gl_nd_assignments, opt_gl_nd_MSE, opt_gl_nd_rate = \
     opt_gl(dummy_data, init_assignments, init_cword_len, lagrange_mult=0.1,
     nn_method='brute_break')
 
-print("Time to compute nd (optimal) vector quantization:",
+# Torch
+opt_gl_nd_apts, opt_gl_nd_assignments, opt_gl_nd_MSE, opt_gl_nd_rate = \
+    opt_gl_torch(dummy_data, init_assignments, init_cword_len, lagrange_mult=0.1,
+            device=device, nn_method='brute_break')
+
+print("Time to compute {}d (optimal) vector quantization:".format(ndims),
     time.time() - starttime)
 
 print("{}d MSE per dimension".format(ndims),opt_gl_nd_MSE/ndims)
