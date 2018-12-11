@@ -115,9 +115,7 @@ def compute_quantization(samples, init_assignment_pts,
   shannon_entropy = np.sum(cword_probs * codeword_lengths)
   code_cost = MSE + lagrange_mult * shannon_entropy
 
-  ii = 0
   while True:
-    print("iter", ii); ii = ii+1
     old_code_cost = np.copy(code_cost)
     # update the centroids based on the current partition
     for bin_idx in range(assignment_pts.shape[0]):

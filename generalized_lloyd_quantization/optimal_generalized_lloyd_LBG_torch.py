@@ -84,6 +84,7 @@ def compute_quantization(samples, init_assignment_pts,
   samples = torch.tensor(samples, dtype=torch.float, device=device)
   assignment_pts = torch.tensor(init_assignment_pts, dtype=torch.float, device=device)
   codeword_lengths = torch.tensor(init_assignment_codeword_lengths, dtype=torch.float, device=device)
+  lagrange_mult = float(lagrange_mult)
 
   if samples.dim() == 2 and samples.shape[1] == 1:
     # we'll just work w/ 1d vectors for the scalar case
