@@ -1,6 +1,7 @@
 import pickle
 import numpy as np
-
+import matplotlib.pyplot as plt
+import networkx as nx
 
 def cluster_kruskal(vertices, edges, num_clusters):
     assert(len(vertices) >= num_clusters)
@@ -43,25 +44,60 @@ def cluster_kruskal(vertices, edges, num_clusters):
             minimum_spanning_tree.add(edge)
             k = k-1
             min_cluster_distance = weight
-            print("min_cluster_distance({} cl) = {}".format(k, min_cluster_distance))
+            # print("min_cluster_distance({} cl) = {}".format(k, min_cluster_distance))
     assignments = np.array([find(vertice) for vertice in vertices])
     _, assignments = np.unique(assignments, return_inverse=True)
     return assignments
 
-def get_cluster_assignments(A, num_clusters):
+def get_clusters(A, num_clusters, algo='stoer_wagner'):
     # Cluster columns of A
-    A_normal = A/np.linalg.norm(A, axis=0)[None,:]  # Column-normalized
-    D = -1* np.abs(A_normal.T @ A_normal)
+    if num_clusters == A.shape[1]:
+        return [[i] for i in range(num_clusters)]
+    if algo == 'kruskal':
+        # Use kruskal's algorithm to find maximally spaced clusters
+        D = -1* np.abs(A.T @ A)
+        num_vertices = A.shape[1]
+        vertices = list(range(num_vertices))
+        edges = [(D[i,j],i,j) for i in range(num_vertices) for j in range(num_vertices) if (i<j)]
+        cluster_assignments = cluster_kruskal(vertices, edges, num_clusters)
+        clusters = [[] for c in range(num_clusters)]
+        for p in range(A.shape[1]):
+            clusters[cluster_assignments[p]].append(p)
+        return clusters
+    elif algo == 'stoer_wagner':
+        D = np.abs(A.T @ A)
+        G = nx.from_numpy_matrix(D)
+        assert(num_clusters < G.order())
 
-    # Use kruskal's algorithm to find maximally spaced clusters
-    num_vertices = A.shape[1]
-    vertices = list(range(num_vertices))
-    edges = [(D[i,j],i,j) for i in range(num_vertices) for j in range(num_vertices) if (i<j)]
+        total_cut_val = 0
+        cut_val, partition = nx.stoer_wagner(G)
+        subgraphs = {G: (cut_val, partition)}
+        while num_clusters > len(subgraphs):
+            last_iteration = (num_clusters==(len(subgraphs)+1))
+            # Pick smallest cut sg; divide
+            min_g = None
+            min_val = float('inf')
+            for g in subgraphs:
+                if subgraphs[g][0] < min_val:
+                    min_val = subgraphs[g][0]
+                    min_g = g
+            # print("New stoer_wagner cut of value={}".format(min_val))
+            total_cut_val += min_val
+            v1,v2 = subgraphs[min_g][1]
+            g1 = G.subgraph(v1)
+            g2 = G.subgraph(v2)
+            del subgraphs[min_g]
+            subgraphs[g1] = nx.stoer_wagner(g1) if (g1.order()>1) and (not last_iteration) else (float('inf'), None)
+            subgraphs[g2] = nx.stoer_wagner(g2) if (g2.order()>1) and (not last_iteration) else (float('inf'), None)
 
-    return cluster_kruskal(vertices, edges, num_clusters)
+        print("Total stoer_wagner cut_value={}".format(total_cut_val))
+        clusters = [list(g) for g in subgraphs]
+        return clusters
+    else:
+        raise ValueError("Unrecognized algorith: {}".format(algo))
 
 if __name__ == "__main__":
-    dict_file = 'sc_dictionary_16x16_lamda0point1_Field.p'
+    dict_file = '../../../data/sc_dictionary_8x8_lamda0point1_Field.p'
     A = pickle.load(open(dict_file, 'rb'))
     assert(isinstance(A, np.ndarray))
-    cluster_assignments = get_cluster_assignments(A, int(A.shape[1]/3))
+    clusters = get_clusters(A, int(A.shape[1]/3))

@@ -9,12 +9,12 @@ from generalized_lloyd_LBG import compute_quantization as gl
 from optimal_generalized_lloyd_LBG import compute_quantization as opt_gl_numpy
 from optimal_generalized_lloyd_LBG_torch import compute_quantization as opt_gl_torch
 
-from utils.clustering import get_cluster_assignments
+from utils.clustering import get_clusters
 from analysis_transforms import fista
 
 dict_file = '../../../data/sc_dictionary_8x8_lamda0point1_Field.p'
 data_file = '../../../data/two_million_unwhite_centered_patches_8x8.p'
-1
+
 patch_dimensions = (8, 8)
 sparsity_param = 0.1
 
@@ -45,11 +45,8 @@ X = raw_sc_codes.T      # (d,n)
 X = X[:50000]
 
 # Create Clusters
-num_clusters = int(A.shape[1]/3)
-cluster_assignments = get_cluster_assignments(A, num_clusters)
-clusters = [[] for c in range(num_clusters)]
-for p in range(A.shape[1]):
-    clusters[cluster_assignments[p]].append(p)
+num_clusters = 10 # int(A.shape[1]/3)
+clusters = get_clusters(A, num_clusters)
 
 def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
                                 binwidth=1, placement_scheme='on_mean',
