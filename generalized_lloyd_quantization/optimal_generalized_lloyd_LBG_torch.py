@@ -87,8 +87,17 @@ def compute_quantization(samples, init_assignment_pts,
   lagrange_mult = float(lagrange_mult)
 
   if samples.dim() == 1:
+    assert(assignment_pts.ndim == 1)
     samples = samples[:,None]
     assignment_pts = assignment_pts[:,None]
+
+  # Sanity Check
+  assert(samples.dim() == 2)
+  assert(assignment_pts.dim() == 2)
+  assert(samples.shape[1] == assignment_pts.shape[1])
+  assert(codeword_lengths.shape == (assignment_pts.shape[0],))
+  assert(isinstance(lagrange_mult, float))
+  assert(isinstance(epsilon, float))
 
   lagrange_mult = lagrange_mult * torch.mean(torch.std(samples, dim=0))
   #^ put effective lagrange mult on a sort of normalized scale

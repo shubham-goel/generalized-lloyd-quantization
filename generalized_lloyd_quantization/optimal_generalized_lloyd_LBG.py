@@ -85,20 +85,24 @@ def compute_quantization(samples, init_assignment_pts,
   samples = np.copy(samples)
   assignment_pts = np.copy(init_assignment_pts)
   codeword_lengths = np.copy(init_assignment_codeword_lengths)
-  if samples.ndim == 2 and samples.shape[1] == 1:
-    # we'll just work w/ 1d vectors for the scalar case
-    samples = np.squeeze(samples)
-    assignment_pts = np.squeeze(assignment_pts)
+  lagrange_mult = float(lagrange_mult)
+
   if samples.ndim == 1:
-    # we use a more efficient partition strategy for scalar vars that
-    # requires the assignment points to be sorted
-    assignment_pts = np.sort(assignment_pts)
-    assert np.all(np.diff(assignment_pts) > 0)  # monotonically increasing
-    lagrange_mult = lagrange_mult * np.std(samples)
-  else:
-    lagrange_mult = lagrange_mult * np.mean(np.std(samples, axis=0))
-    #^ put effective lagrange mult on a sort of normalized scale
-    #  with the standard deviation of our samples
+    assert(assignment_pts.ndim == 1)
+    samples = samples[:,None]
+    assignment_pts = assignment_pts[:,None]
+
+  # Sanity Check
+  assert(samples.ndim == 2)
+  assert(assignment_pts.ndim == 2)
+  assert(samples.shape[1] == assignment_pts.shape[1])
+  assert(codeword_lengths.shape == (assignment_pts.shape[0],))
+  assert(isinstance(lagrange_mult, float))
+  assert(isinstance(epsilon, float))
+
+  lagrange_mult = lagrange_mult * np.mean(np.std(samples, axis=0))
+  #^ put effective lagrange mult on a sort of normalized scale
+  #  with the standard deviation of our samples
 
   # partition the data into appropriate clusters
   quantized_code, cluster_assignments, assignment_pts, codeword_lengths = \
