@@ -141,6 +141,12 @@ def compute_quantization(samples, binwidth, placement_scheme='on_mode'):
   shannon_entropy = -1 * np.sum(
       cword_probs[nonzero_prob_pts] * np.log2(cword_probs[nonzero_prob_pts]))
 
+  # Sort assignment_pts, cluster_assignments in decreasing order of probabliity
+  sorted_i = np.flip(np.argsort(cword_probs),axis=0)
+  cword_probs = cword_probs[sorted_i]
+  assignment_pts = assignment_pts[sorted_i, :]
+  cluster_assignments = np.argsort(sorted_i)[cluster_assignments]
+
   return assignment_pts, cluster_assignments, MSE, shannon_entropy
 
 

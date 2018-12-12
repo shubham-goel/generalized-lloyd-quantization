@@ -152,6 +152,13 @@ def compute_quantization(samples, init_assignment_pts,
   MSE = MSE.item()
   shannon_entropy = shannon_entropy.item()
 
+  # Sort assignment_pts, cluster_assignments in decreasing order of probabliity
+  probs = calculate_assignment_probabilites(cluster_assignments, len(assignment_pts))
+  sorted_i = np.flip(np.argsort(probs),axis=0)
+  probs = probs[sorted_i]
+  assignment_pts = assignment_pts[sorted_i, :]
+  cluster_assignments = np.argsort(sorted_i)[cluster_assignments]
+
   return assignment_pts, cluster_assignments, MSE, shannon_entropy
 
 
