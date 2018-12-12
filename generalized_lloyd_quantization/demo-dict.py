@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 from null_uniform import compute_quantization as uni
 from generalized_lloyd_LBG import compute_quantization as gl
 from optimal_generalized_lloyd_LBG import compute_quantization as opt_gl_numpy
+from optimal_generalized_lloyd_LBG import calculate_assignment_probabilites
 from optimal_generalized_lloyd_LBG_torch import compute_quantization as opt_gl_torch
 
 from utils.clustering import get_clusters
@@ -57,17 +58,21 @@ def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
         data: ndarray (d,n)
         quant_method: str {'uni', 'lloyd', 'opt_lloyd'}
         clusters: [cluster1, cluster2, ...] where cluster1 = [idx_1, idx_2, ...]
-        binwidth: float
+        binwidth: float or ndarray(n)
         placement_scheme: str {'on_mode', 'on_median', 'on_mean', 'on_zero'}
-        lagrange_mult: float for lloyd
+        lagrange_mult: float
         nn_method: str {'brute_np', 'brute_scipy', 'brute_break', 'kdtree'}
         device: str {'numpy', 'cpu', 'cuda', ...}
     Returns
-
+        a_pts, c_ass, MSE, rate
     """
-    init_clusters = clusters
+    data_dim = data.shape[1]
     if clusters is None:
-        clusters = [list(range(data.shape[1]))]
+        clusters = [list(range(data_dim))]
+    if isinstance(binwidth, np.ndarray):
+        assert(binwidth.shape == (data_dim,))
+    else:
+        binwidth = np.array([float(binwidth)]*data_dim)
 
     a_pts_all = []
     c_ass_all = []
@@ -76,14 +81,15 @@ def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
     for cluster in clusters:
         cluster_dim = len(cluster)
         Xc = data[:,cluster]
-        print('Xc.shape',Xc.shape)
+        binwidth_c = binwidth[cluster]
+        print('cluster of size {}:'.format(cluster_dim),cluster)
         if quant_method=='uni':
-            a_pts, c_ass, MSE, rate = uni(Xc, np.array([binwidth]*cluster_dim), placement_scheme=placement_scheme)
+            a_pts, c_ass, MSE, rate = uni(Xc, binwidth_c, placement_scheme=placement_scheme)
         elif quant_method=='lloyd':
-            init_apts, _, _, _ = uni(Xc, np.array([binwidth]*cluster_dim), placement_scheme=placement_scheme)
+            init_apts, _, _, _ = uni(Xc, binwidth_c, placement_scheme=placement_scheme)
             a_pts, c_ass, MSE, rate = gl(Xc, init_apts, force_const_num_assignment_pts=False)
         elif quant_method=='opt_lloyd':
-            init_apts, _, _, _ = uni(Xc, np.array([binwidth]*cluster_dim), placement_scheme=placement_scheme)
+            init_apts, _, _, _ = uni(Xc, binwidth_c, placement_scheme=placement_scheme)
             init_cword_len = (-1. * np.log2(1. / len(init_apts)) *np.ones((len(init_apts),)))
             if device=='numpy':
                 a_pts, c_ass, MSE, rate = opt_gl_numpy(Xc, init_apts, init_cword_len, lagrange_mult=lagrange_mult,
@@ -102,18 +108,80 @@ def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
 
         else:
             raise ValueError("Invalid quant_method {}".format(quant_method))
-        print(cluster_dim,  MSE, rate)
+        print('MSE', MSE, 'rate', rate)
         a_pts_all.append(a_pts)
         c_ass_all.append(c_ass)
         MSE_total += MSE
         rate_total += rate
-    if init_clusters is None:
-        a_pts_all = a_pts_all[0]
-        c_ass_all = c_ass_all[0]
     return a_pts_all, c_ass_all, MSE_total, rate_total
 
-a_pts, c_ass, MSE, rate = compute_quantization_wrapper(X,clusters=clusters,quant_method='opt_lloyd',
-                                                binwidth=5, device=device)
-
+num_bins = 40
+binwidths = X.ptp(axis=0)/num_bins
+quant_method = 'opt_lloyd'
+a_pts_all, c_ass_all, MSE, rate = compute_quantization_wrapper(X,clusters=clusters,quant_method=quant_method,
+                                                binwidth=binwidths, device='numpy')
 print('MSE',MSE)
 print('rate',rate)
+
+ass_probs_all = []
+codeword_lengths = []
+# Permute code-indices in decreasing order of probability
+# Also compute codeword lengths and assignment_probablities while at it
+for i in range(len(clusters)):
+    a_pts = a_pts_all[i]
+    c_ass = c_ass_all[i]
+
+    probs = calculate_assignment_probabilites(c_ass, len(a_pts))
+    sorted_i = np.flip(np.argsort(probs),axis=0)
+    probs = probs[sorted_i]
+    a_pts_all[i] = a_pts[sorted_i, :]
+    c_ass_all[i] = np.argsort(sorted_i)[c_ass]
+    ass_probs_all.append(probs)
+    codeword_lengths.append(-1 * np.log2(probs))
+
+# Save to disk
+quantization_data = {
+    'quant_method':quant_method,
+    'dimension':X.shape[1],
+    'clusters':clusters,
+    'assignment_points':a_pts_all,
+    'codeword_lengths':codeword_lengths,
+    'trained_on': {
+        'dict_file':dict_file,
+        'data_file':data_file,
+        'binwidths':binwidths,
+        'codes_assigned':c_ass_all
+    }
+}
+quantization_code_file = 'quant_codes/quantization_code__{}__{}cl.p'.format(quant_method, num_clusters)
+pickle.dump(quantization_data, open(quantization_code_file, 'wb'))
+
+
+# Plotting...
+num_clusters = len(clusters)
+code_sizes = [a_pts.shape[0] for a_pts in a_pts_all]
+max_codesize = max(code_sizes)
+
+ass_probs_heatmap = np.zeros((max_codesize,num_clusters))
+ass_probs_heatmap.fill(np.nan)
+for i in range(num_clusters):
+    ass_probs_heatmap[:code_sizes[i],i] = ass_probs_all[i]
+
+c_ass_ndarray = np.array(c_ass_all).T
+
+for _ in range(2):
+    # Overlay probablity heatmap with code
+    random_data_pt = np.random.randint(0,X.shape[0])
+    data_img = (Y[random_data_pt] + img_patch_comp_means).reshape(patch_dimensions)
+    data_sc = X[random_data_pt]
+    data_sc_clustered = [np.linalg.norm(data_sc[cluster]) for cluster in clusters]
+    data_code = c_ass_ndarray[random_data_pt]
+
+    fig = plt.figure(figsize=(15,8))
+    plt.imshow(ass_probs_heatmap, cmap='hot', interpolation='nearest')
+    plt.colorbar()
+    plt.title("Visualizing random data-point #{}".format(random_data_pt))
+    plt.plot(c_ass_ndarray[random_data_pt],'ro', color = 'b')
+    plt.plot(data_sc_clustered,color = 'r', linestyle='-',linewidth = 1)
+    fig.savefig('spare_quant_viz/{}/{}.png'.format(quant_method,random_data_pt))
+    plt.close(fig)
