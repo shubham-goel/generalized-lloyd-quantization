@@ -1,3 +1,4 @@
+import os
 import time
 import pickle
 import torch
@@ -16,8 +17,11 @@ from analysis_transforms import fista
 dict_file = '../../../data/sc_dictionary_8x8_lamda0point1_Field.p'
 data_file = '../../../data/two_million_unwhite_centered_patches_8x8.p'
 
+# Parameters for FISTA
 patch_dimensions = (8, 8)
 sparsity_param = 0.1
+fista_device = 'cuda:1'
+torch.cuda.set_device(1)
 
 patch_dataset = pickle.load(open(data_file, 'rb'))
 zero_mean_patches = np.transpose(
@@ -25,17 +29,16 @@ zero_mean_patches = np.transpose(
         (-1, patch_dimensions[0]*patch_dimensions[1])).T
 img_patch_comp_means = patch_dataset['original_patch_means']
 
-device = 'cuda:2'
-torch.cuda.set_device(2)
-
 sc_dictionary = pickle.load(open(dict_file, 'rb'))
 
 print('running FISTA')
 raw_sc_codes = fista.run(
-    torch.from_numpy(zero_mean_patches).to(device),
-    torch.from_numpy(sc_dictionary).to(device), sparsity_param, 1000).cpu().numpy()
+    torch.from_numpy(zero_mean_patches).to(fista_device),
+    torch.from_numpy(sc_dictionary).to(fista_device), sparsity_param, 1000).cpu().numpy()
 #^ now samples index first dim, code coefficients in second dim
 print('done')
+
+torch.cuda.empty_cache()
 
 Y = zero_mean_patches.T #(d,n)
 A = sc_dictionary       # (n,n)
@@ -45,9 +48,14 @@ X = raw_sc_codes.T      # (d,n)
 # Use only some X
 X = X[:50000]
 
-# Create Clusters
-num_clusters = 10 # int(A.shape[1]/3)
-clusters = get_clusters(A, num_clusters)
+# Parameters for quant-computation
+quant_method = 'opt_lloyd'
+lagrange_mult = 1.
+num_bins = 40
+num_clusters = 60
+clustering_algo = 'stoer_wagner'
+quant_device = 'numpy'
+# torch.cuda.set_device(1)
 
 def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
                                 binwidth=1, placement_scheme='on_mean',
@@ -115,27 +123,20 @@ def compute_quantization_wrapper(data, quant_method='uni', clusters=None,
         rate_total += rate
     return a_pts_all, c_ass_all, MSE_total, rate_total
 
-num_bins = 40
+clusters = get_clusters(A, num_clusters, algo=clustering_algo)
 binwidths = X.ptp(axis=0)/num_bins
-quant_method = 'opt_lloyd'
 a_pts_all, c_ass_all, MSE, rate = compute_quantization_wrapper(X,clusters=clusters,quant_method=quant_method,
-                                                binwidth=binwidths, device='numpy')
+                                                binwidth=binwidths, device=quant_device, lagrange_mult=lagrange_mult)
 print('MSE',MSE)
 print('rate',rate)
 
 ass_probs_all = []
 codeword_lengths = []
-# Permute code-indices in decreasing order of probability
-# Also compute codeword lengths and assignment_probablities while at it
+# Compute codeword lengths and assignment_probablities
 for i in range(len(clusters)):
     a_pts = a_pts_all[i]
     c_ass = c_ass_all[i]
-
     probs = calculate_assignment_probabilites(c_ass, len(a_pts))
-    sorted_i = np.flip(np.argsort(probs),axis=0)
-    probs = probs[sorted_i]
-    a_pts_all[i] = a_pts[sorted_i, :]
-    c_ass_all[i] = np.argsort(sorted_i)[c_ass]
     ass_probs_all.append(probs)
     codeword_lengths.append(-1 * np.log2(probs))
 
@@ -147,15 +148,22 @@ quantization_data = {
     'assignment_points':a_pts_all,
     'codeword_lengths':codeword_lengths,
     'trained_on': {
-        'dict_file':dict_file,
-        'data_file':data_file,
+        'dict_file':os.path.basename(dict_file),
+        'data_file':os.path.basename(data_file),
+        'num_bins':num_bins,
         'binwidths':binwidths,
-        'codes_assigned':c_ass_all
+        'codes_assigned':c_ass_all,
+        'clustering_algo':clustering_algo,
+        'lagrange_mult':lagrange_mult,
+        'MSE':MSE,
+        'rate':rate
     }
 }
-quantization_code_file = 'quant_codes/quantization_code__{}__{}cl.p'.format(quant_method, num_clusters)
+if quant_method != 'uni':
+    quantization_code_file = 'quant_codes/quantization_code__{}D__{}__{}_{}_clusters__{}bins__{}MSE__{}RATE.p'.format(X.shape[1], quant_method, num_clusters, clustering_algo, num_bins, MSE, rate)
+else:
+    quantization_code_file = 'quant_codes/quantization_code__{}D__{}__{}_{}_clusters__{}bins__{}lambda__{}MSE__{}RATE.p'.format(X.shape[1], quant_method, num_clusters, clustering_algo, num_bins, lagrange_mult, MSE, rate)
 pickle.dump(quantization_data, open(quantization_code_file, 'wb'))
-
 
 # Plotting...
 num_clusters = len(clusters)
